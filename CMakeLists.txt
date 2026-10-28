@@ -13,6 +13,7 @@ endif()
 # Hash function library
 add_library(philohash
   src/sha256.cpp
+  src/sha256_variants.cpp
 )
 target_include_directories(philohash PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -28,10 +29,22 @@ target_compile_definitions(hash_texts PRIVATE
   PHILOHASH_TEXTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/texts"
 )
 
+# Experiment: replace the sigma functions with other bit operations
+add_executable(sigma_experiment apps/sigma_experiment.cpp)
+target_link_libraries(sigma_experiment PRIVATE philohash)
+target_compile_definitions(sigma_experiment PRIVATE
+  PHILOHASH_TEXTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/texts"
+  PHILOHASH_RESULTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/results"
+)
+
 # Tests
 include(CTest)
 if(BUILD_TESTING)
   add_executable(test_sha256 tests/test_sha256.cpp)
   target_link_libraries(test_sha256 PRIVATE philohash)
   add_test(NAME sha256 COMMAND test_sha256)
+
+  add_executable(test_sha256_variants tests/test_sha256_variants.cpp)
+  target_link_libraries(test_sha256_variants PRIVATE philohash)
+  add_test(NAME sha256_variants COMMAND test_sha256_variants)
 endif()

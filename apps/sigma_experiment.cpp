@@ -10,14 +10,15 @@
 //              message schedule W[16..63] that change. This is σ's job, and
 //              is invisible in the hash-level tests above.
 //   σ0 ones    share of 1 bits in the pattern's own output (ideal 0.5)
-//   σ0 uniq    distinct outputs of the pattern on 2^20 distinct words
-//              (100% = no information lost)
+//   σ0 uniq    distinct outputs of the pattern over all 2^32 inputs
+//              (100% = one-to-one, no information lost). Exact, not sampled.
 //   MB/s       hashing speed (best of several runs)
 //
 // Usage: sigma_experiment [--rounds 64,24] [--texts DIR] [--csv FILE]
 #include "philohash/sha256_variants.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -25,8 +26,10 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -39,7 +42,6 @@ namespace {
 constexpr int kMaxFlipsPerText = 4096;
 constexpr std::size_t kCounterInputs = 1 << 17;
 constexpr int kTruncBits = 24;
-constexpr std::size_t kSigmaSamples = 1 << 20;
 constexpr int kScheduleBlocks = 256;
 constexpr std::size_t kSpeedBytes = 8 << 20;
 constexpr int kSpeedRuns = 5;
@@ -171,18 +173,45 @@ void schedule_avalanche(const Variant &v, Result &r) {
   r.sched_mean = (double)changed / (trials * 48.0 * 32.0);
 }
 
-void sigma_alone(const Variant &v, Result &r) {
-  std::vector<u32> out(kSigmaSamples);
-  long ones = 0;
-  for (std::size_t i = 0; i < kSigmaSamples; i++) {
-    // i -> i * odd constant is one-to-one, so all inputs are distinct.
-    out[i] = v.sigma0((u32)i * 0x9e3779b1u + 0x7f4a7c15u);
-    ones += __builtin_popcount(out[i]);
+struct SigmaStats {
+  double ones; // share of 1 bits over all outputs
+  double uniq; // distinct outputs / 2^32, in percent
+};
+
+// Evaluates the pattern on every one of the 2^32 inputs, marking each output
+// in a 512 MiB bitmap, split across all CPU cores. (Sampling is not enough:
+// a 2^20 sample reported comb-add as one-to-one when it reaches only 50%.)
+SigmaStats sigma_exact(u32 (*sigma0)(u32),
+                       std::vector<std::atomic<std::uint64_t>> &seen) {
+  for (auto &word : seen)
+    word.store(0, std::memory_order_relaxed);
+
+  const unsigned n_threads = std::max(1u, std::thread::hardware_concurrency());
+  const std::uint64_t total = 1ull << 32;
+  std::vector<std::uint64_t> ones(n_threads, 0);
+  std::vector<std::thread> threads;
+  for (unsigned t = 0; t < n_threads; t++) {
+    threads.emplace_back([&, t] {
+      const std::uint64_t lo = total * t / n_threads;
+      const std::uint64_t hi = total * (t + 1) / n_threads;
+      std::uint64_t local_ones = 0;
+      for (std::uint64_t x = lo; x < hi; x++) {
+        const u32 y = sigma0((u32)x);
+        seen[y >> 6].fetch_or(1ull << (y & 63), std::memory_order_relaxed);
+        local_ones += __builtin_popcount(y);
+      }
+      ones[t] = local_ones;
+    });
   }
-  r.sigma_ones = (double)ones / (32.0 * kSigmaSamples);
-  std::sort(out.begin(), out.end());
-  const auto uniq = std::unique(out.begin(), out.end()) - out.begin();
-  r.sigma_uniq = 100.0 * uniq / kSigmaSamples;
+  for (auto &th : threads)
+    th.join();
+
+  std::uint64_t distinct = 0, all_ones = 0;
+  for (const auto &word : seen)
+    distinct += __builtin_popcountll(word.load(std::memory_order_relaxed));
+  for (std::uint64_t o : ones)
+    all_ones += o;
+  return {(double)all_ones / (32.0 * total), 100.0 * distinct / total};
 }
 
 void speed(const Variant &v, int rounds, const std::vector<unsigned char> &buf,
@@ -201,7 +230,8 @@ void speed(const Variant &v, int rounds, const std::vector<unsigned char> &buf,
 
 // Flags: A avalanche, S SAC, C truncated collisions, F a real collision found
 // (in the counter set, or a one-bit flip that changed nothing), B bit balance,
-// W message schedule clearly less mixed than standard SHA-256's 0.424.
+// W message schedule clearly less mixed than standard SHA-256's 0.424,
+// L the pattern itself loses information (not one-to-one on 32-bit words).
 // Thresholds are roughly 3-4 standard deviations from ideal.
 std::string verdict(const Result &r) {
   std::string flags;
@@ -217,6 +247,8 @@ std::string verdict(const Result &r) {
     flags += 'B';
   if (r.sched_mean < 0.40)
     flags += 'W';
+  if (r.sigma_uniq < 100.0)
+    flags += 'L';
   return flags.empty() ? "ok" : "WEAK:" + flags;
 }
 
@@ -266,6 +298,21 @@ int main(int argc, char **argv) {
          "sigma0_uniq_pct,mbps,verdict\n";
 
   const auto variants = philohash::variant::all_variants();
+
+  // The pattern's own properties do not depend on scope or rounds, so the
+  // exhaustive check runs once per pattern, before any speed measurement.
+  std::map<std::string, SigmaStats> sigma_stats;
+  {
+    std::vector<std::atomic<std::uint64_t>> seen(1ull << 26);
+    for (const auto &v : variants) {
+      if (sigma_stats.count(v.pattern))
+        continue;
+      std::fprintf(stderr, "checking %s on all 2^32 inputs...\n",
+                   v.pattern.c_str());
+      sigma_stats[v.pattern] = sigma_exact(v.sigma0, seen);
+    }
+  }
+
   // Warm up the CPU (clock ramp-up) so the first variant's speed is not
   // understated.
   const auto warmup_start = std::chrono::steady_clock::now();
@@ -283,7 +330,8 @@ int main(int argc, char **argv) {
       avalanche(v, rounds, texts, r);
       counter_inputs(v, rounds, r);
       schedule_avalanche(v, r);
-      sigma_alone(v, r);
+      r.sigma_ones = sigma_stats[v.pattern].ones;
+      r.sigma_uniq = sigma_stats[v.pattern].uniq;
       speed(v, rounds, speed_buf, r);
       r.verdict = verdict(r);
 

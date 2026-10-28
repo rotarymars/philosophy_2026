@@ -31,7 +31,8 @@ target_compile_definitions(hash_texts PRIVATE
 
 # Experiment: replace the sigma functions with other bit operations
 add_executable(sigma_experiment apps/sigma_experiment.cpp)
-target_link_libraries(sigma_experiment PRIVATE philohash)
+find_package(Threads REQUIRED)
+target_link_libraries(sigma_experiment PRIVATE philohash Threads::Threads)
 target_compile_definitions(sigma_experiment PRIVATE
   PHILOHASH_TEXTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/texts"
   PHILOHASH_RESULTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/results"

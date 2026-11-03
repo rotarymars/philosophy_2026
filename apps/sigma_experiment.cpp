@@ -15,151 +15,33 @@
 //   MB/s       hashing speed (best of several runs)
 //
 // Usage: sigma_experiment [--rounds 64,24] [--texts DIR] [--csv FILE]
+#include "bench.hpp"
 #include "philohash/sha256_variants.hpp"
 
-#include <algorithm>
-#include <atomic>
-#include <chrono>
-#include <cmath>
 #include <cstdio>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <iterator>
 #include <map>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
-using philohash::variant::Digest;
-using philohash::variant::u32;
+using bench::u32;
 using philohash::variant::Variant;
 
 namespace {
 
-constexpr int kMaxFlipsPerText = 4096;
-constexpr std::size_t kCounterInputs = 1 << 17;
-constexpr int kTruncBits = 24;
 constexpr int kScheduleBlocks = 256;
 constexpr std::size_t kSpeedBytes = 8 << 20;
-constexpr int kSpeedRuns = 5;
 
-struct Result {
-  double aval_mean = 0;
-  int aval_min = 256;
-  double sac_dev = 0;
-  double coll_ratio = 0;
-  long full_coll = 0;
-  double balance_dev = 0;
-  double sched_mean = 0;
-  double sigma_ones = 0;
-  double sigma_uniq = 0;
-  double mbps = 0;
-  std::string verdict;
-};
-
-std::uint64_t splitmix64(std::uint64_t &state) {
-  std::uint64_t z = (state += 0x9e3779b97f4a7c15ull);
-  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-  z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-  return z ^ (z >> 31);
-}
-
-std::vector<std::string> load_texts(const fs::path &dir) {
-  std::vector<fs::path> paths;
-  for (const auto &entry : fs::directory_iterator(dir))
-    if (entry.is_regular_file())
-      paths.push_back(entry.path());
-  std::sort(paths.begin(), paths.end());
-
-  std::vector<std::string> texts;
-  for (const auto &p : paths) {
-    std::ifstream in(p, std::ios::binary);
-    std::string s((std::istreambuf_iterator<char>(in)),
-                  std::istreambuf_iterator<char>());
-    if (!s.empty())
-      texts.push_back(std::move(s));
-  }
-  return texts;
-}
-
-Digest run(const Variant &v, const std::string &s, int rounds) {
-  return v.hash((const unsigned char *)s.data(), s.size(), rounds);
-}
-
-void avalanche(const Variant &v, int rounds,
-               const std::vector<std::string> &texts, Result &r) {
-  long trials = 0, flipped_total = 0;
-  std::vector<long> flips_per_bit(256, 0);
-  for (std::string text : texts) {
-    const Digest base = run(v, text, rounds);
-    const long bits = (long)text.size() * 8;
-    const long step = std::max(1L, bits / kMaxFlipsPerText);
-    for (long b = 0; b < bits; b += step) {
-      text[b / 8] ^= (char)(1 << (b % 8));
-      const Digest d = run(v, text, rounds);
-      text[b / 8] ^= (char)(1 << (b % 8));
-
-      int dist = 0;
-      for (int i = 0; i < 32; i++) {
-        const unsigned diff = base[i] ^ d[i];
-        dist += __builtin_popcount(diff);
-        for (int j = 0; j < 8; j++)
-          if (diff >> (7 - j) & 1)
-            flips_per_bit[8 * i + j]++;
-      }
-      flipped_total += dist;
-      r.aval_min = std::min(r.aval_min, dist);
-      trials++;
-    }
-  }
-  r.aval_mean = (double)flipped_total / (256.0 * trials);
-  for (long c : flips_per_bit)
-    r.sac_dev = std::max(r.sac_dev, std::fabs((double)c / trials - 0.5));
-}
-
-void counter_inputs(const Variant &v, int rounds, Result &r) {
-  std::vector<Digest> digests(kCounterInputs);
-  std::vector<u32> truncated(kCounterInputs);
-  std::vector<long> ones(256, 0);
-  for (std::size_t i = 0; i < kCounterInputs; i++) {
-    const Digest d = run(v, std::to_string(i), rounds);
-    digests[i] = d;
-    truncated[i] = ((u32)d[0] << 16 | (u32)d[1] << 8 | d[2]);
-    for (int b = 0; b < 256; b++)
-      ones[b] += d[b / 8] >> (7 - b % 8) & 1;
-  }
-
-  auto colliding_pairs = [](auto &xs) {
-    std::sort(xs.begin(), xs.end());
-    long pairs = 0, run_len = 1;
-    for (std::size_t i = 1; i <= xs.size(); i++) {
-      if (i < xs.size() && xs[i] == xs[i - 1]) {
-        run_len++;
-      } else {
-        pairs += run_len * (run_len - 1) / 2;
-        run_len = 1;
-      }
-    }
-    return pairs;
-  };
-  const double n = (double)kCounterInputs;
-  const double expected = n * (n - 1) / 2 / std::pow(2.0, kTruncBits);
-  r.coll_ratio = colliding_pairs(truncated) / expected;
-  r.full_coll = colliding_pairs(digests);
-  for (long c : ones)
-    r.balance_dev = std::max(r.balance_dev, std::fabs(c / n - 0.5));
-}
-
-void schedule_avalanche(const Variant &v, Result &r) {
+double schedule_avalanche(const Variant &v) {
   std::uint64_t state = 777;
   long trials = 0, changed = 0;
   for (int blk = 0; blk < kScheduleBlocks; blk++) {
     u32 block[16], base[64], w[64];
     for (u32 &x : block)
-      x = (u32)splitmix64(state);
+      x = (u32)bench::splitmix64(state);
     v.schedule(block, base);
     for (int bit = 0; bit < 512; bit++) {
       block[bit / 32] ^= 1u << (bit % 32);
@@ -170,84 +52,18 @@ void schedule_avalanche(const Variant &v, Result &r) {
       trials++;
     }
   }
-  r.sched_mean = (double)changed / (trials * 48.0 * 32.0);
+  return (double)changed / (trials * 48.0 * 32.0);
 }
 
-struct SigmaStats {
-  double ones; // share of 1 bits over all outputs
-  double uniq; // distinct outputs / 2^32, in percent
-};
-
-// Evaluates the pattern on every one of the 2^32 inputs, marking each output
-// in a 512 MiB bitmap, split across all CPU cores. (Sampling is not enough:
-// a 2^20 sample reported comb-add as one-to-one when it reaches only 50%.)
-SigmaStats sigma_exact(u32 (*sigma0)(u32),
-                       std::vector<std::atomic<std::uint64_t>> &seen) {
-  for (auto &word : seen)
-    word.store(0, std::memory_order_relaxed);
-
-  const unsigned n_threads = std::max(1u, std::thread::hardware_concurrency());
-  const std::uint64_t total = 1ull << 32;
-  std::vector<std::uint64_t> ones(n_threads, 0);
-  std::vector<std::thread> threads;
-  for (unsigned t = 0; t < n_threads; t++) {
-    threads.emplace_back([&, t] {
-      const std::uint64_t lo = total * t / n_threads;
-      const std::uint64_t hi = total * (t + 1) / n_threads;
-      std::uint64_t local_ones = 0;
-      for (std::uint64_t x = lo; x < hi; x++) {
-        const u32 y = sigma0((u32)x);
-        seen[y >> 6].fetch_or(1ull << (y & 63), std::memory_order_relaxed);
-        local_ones += __builtin_popcount(y);
-      }
-      ones[t] = local_ones;
-    });
-  }
-  for (auto &th : threads)
-    th.join();
-
-  std::uint64_t distinct = 0, all_ones = 0;
-  for (const auto &word : seen)
-    distinct += __builtin_popcountll(word.load(std::memory_order_relaxed));
-  for (std::uint64_t o : ones)
-    all_ones += o;
-  return {(double)all_ones / (32.0 * total), 100.0 * distinct / total};
-}
-
-void speed(const Variant &v, int rounds, const std::vector<unsigned char> &buf,
-           Result &r) {
-  double best = 1e30;
-  for (int run = 0; run < kSpeedRuns; run++) {
-    const auto start = std::chrono::steady_clock::now();
-    volatile unsigned char sink = v.hash(buf.data(), buf.size(), rounds)[0];
-    (void)sink;
-    const std::chrono::duration<double> sec =
-        std::chrono::steady_clock::now() - start;
-    best = std::min(best, sec.count());
-  }
-  r.mbps = buf.size() / 1e6 / best;
-}
-
-// Flags: A avalanche, S SAC, C truncated collisions, F a real collision found
-// (in the counter set, or a one-bit flip that changed nothing), B bit balance,
+// Output flags (see bench.hpp) plus:
 // W message schedule clearly less mixed than standard SHA-256's 0.424,
 // L the pattern itself loses information (not one-to-one on 32-bit words).
-// Thresholds are roughly 3-4 standard deviations from ideal.
-std::string verdict(const Result &r) {
-  std::string flags;
-  if (std::fabs(r.aval_mean - 0.5) > 0.01)
-    flags += 'A';
-  if (r.sac_dev > 0.04)
-    flags += 'S';
-  if (std::fabs(r.coll_ratio - 1.0) > 0.15)
-    flags += 'C';
-  if (r.full_coll > 0 || r.aval_min == 0)
-    flags += 'F';
-  if (r.balance_dev > 0.01)
-    flags += 'B';
-  if (r.sched_mean < 0.40)
+std::string verdict(const bench::OutputStats &r, double sched_mean,
+                    double sigma_uniq) {
+  std::string flags = bench::output_flags(r);
+  if (sched_mean < 0.40)
     flags += 'W';
-  if (r.sigma_uniq < 100.0)
+  if (sigma_uniq < 100.0)
     flags += 'L';
   return flags.empty() ? "ok" : "WEAK:" + flags;
 }
@@ -281,15 +97,12 @@ int main(int argc, char **argv) {
     }
   }
 
-  const auto texts = load_texts(texts_dir);
+  const auto texts = bench::load_texts(texts_dir);
   if (texts.empty()) {
     std::cerr << "no non-empty files in " << texts_dir << '\n';
     return 1;
   }
-  std::vector<unsigned char> speed_buf(kSpeedBytes);
-  std::uint64_t state = 1;
-  for (auto &c : speed_buf)
-    c = (unsigned char)splitmix64(state);
+  const auto speed_buf = bench::random_bytes(kSpeedBytes, 1);
 
   fs::create_directories(csv_path.parent_path());
   std::ofstream csv(csv_path);
@@ -301,7 +114,7 @@ int main(int argc, char **argv) {
 
   // The pattern's own properties do not depend on scope or rounds, so the
   // exhaustive check runs once per pattern, before any speed measurement.
-  std::map<std::string, SigmaStats> sigma_stats;
+  std::map<std::string, bench::MapStats> sigma_stats;
   {
     std::vector<std::atomic<std::uint64_t>> seen(1ull << 26);
     for (const auto &v : variants) {
@@ -309,16 +122,11 @@ int main(int argc, char **argv) {
         continue;
       std::fprintf(stderr, "checking %s on all 2^32 inputs...\n",
                    v.pattern.c_str());
-      sigma_stats[v.pattern] = sigma_exact(v.sigma0, seen);
+      sigma_stats[v.pattern] = bench::exact_map(v.sigma0, seen);
     }
   }
 
-  // Warm up the CPU (clock ramp-up) so the first variant's speed is not
-  // understated.
-  const auto warmup_start = std::chrono::steady_clock::now();
-  while (std::chrono::steady_clock::now() - warmup_start <
-         std::chrono::seconds(2))
-    variants.front().hash(speed_buf.data(), speed_buf.size(), 64);
+  bench::warm_up(variants.front().hash, speed_buf);
 
   for (int rounds : rounds_list) {
     std::printf("\n=== %d rounds ===\n", rounds);
@@ -326,27 +134,25 @@ int main(int argc, char **argv) {
                 "pattern", "scope", "aval", "min", "SAC", "coll", "full",
                 "bal", "sched", "σ0ones", "σ0uniq%", "MB/s", "verdict");
     for (const auto &v : variants) {
-      Result r;
-      avalanche(v, rounds, texts, r);
-      counter_inputs(v, rounds, r);
-      schedule_avalanche(v, r);
-      r.sigma_ones = sigma_stats[v.pattern].ones;
-      r.sigma_uniq = sigma_stats[v.pattern].uniq;
-      speed(v, rounds, speed_buf, r);
-      r.verdict = verdict(r);
+      bench::OutputStats r;
+      bench::avalanche(v.hash, rounds, texts, r);
+      bench::counter_inputs(v.hash, rounds, r);
+      const double sched = schedule_avalanche(v);
+      const auto &sig = sigma_stats[v.pattern];
+      const double mbps = bench::speed(v.hash, rounds, speed_buf);
+      const std::string verd = verdict(r, sched, sig.uniq);
 
       std::printf("%-15s %-8s %6.4f %4d %6.4f %6.3f %5ld %6.4f %6.4f %7.4f "
                   "%8.3f %7.1f  %s\n",
                   v.pattern.c_str(), v.scope.c_str(), r.aval_mean, r.aval_min,
-                  r.sac_dev, r.coll_ratio, r.full_coll, r.balance_dev,
-                  r.sched_mean, r.sigma_ones, r.sigma_uniq, r.mbps,
-                  r.verdict.c_str());
+                  r.sac_dev, r.coll_ratio, r.full_coll, r.balance_dev, sched,
+                  sig.ones, sig.uniq, mbps, verd.c_str());
       std::fflush(stdout);
       csv << rounds << ',' << v.pattern << ',' << v.scope << ",\""
           << v.formula << "\"," << r.aval_mean << ',' << r.aval_min << ','
           << r.sac_dev << ',' << r.coll_ratio << ',' << r.full_coll << ','
-          << r.balance_dev << ',' << r.sched_mean << ',' << r.sigma_ones << ','
-          << r.sigma_uniq << ',' << r.mbps << ',' << r.verdict << '\n';
+          << r.balance_dev << ',' << sched << ',' << sig.ones << ','
+          << sig.uniq << ',' << mbps << ',' << verd << '\n';
     }
   }
   std::printf("\nCSV written to %s\n", csv_path.string().c_str());

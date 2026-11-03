@@ -14,6 +14,7 @@ endif()
 add_library(philohash
   src/sha256.cpp
   src/sha256_variants.cpp
+  src/chunk_methods.cpp
 )
 target_include_directories(philohash PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -29,14 +30,27 @@ target_compile_definitions(hash_texts PRIVATE
   PHILOHASH_TEXTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/texts"
 )
 
-# Experiment: replace the sigma functions with other bit operations
-add_executable(sigma_experiment apps/sigma_experiment.cpp)
+# Statistical tests shared by the experiments
 find_package(Threads REQUIRED)
-target_link_libraries(sigma_experiment PRIVATE philohash Threads::Threads)
-target_compile_definitions(sigma_experiment PRIVATE
-  PHILOHASH_TEXTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/texts"
-  PHILOHASH_RESULTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/results"
+add_library(bench STATIC apps/bench.cpp)
+target_include_directories(bench PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps)
+target_link_libraries(bench PUBLIC Threads::Threads)
+target_compile_options(bench PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra>
 )
+
+# Experiments
+foreach(experiment sigma_experiment chunk_experiment)
+  add_executable(${experiment} apps/${experiment}.cpp)
+  target_link_libraries(${experiment} PRIVATE philohash bench)
+  target_compile_definitions(${experiment} PRIVATE
+    PHILOHASH_TEXTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/texts"
+    PHILOHASH_RESULTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/results"
+  )
+  target_compile_options(${experiment} PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra>
+  )
+endforeach()
 
 # Tests
 include(CTest)
@@ -48,4 +62,8 @@ if(BUILD_TESTING)
   add_executable(test_sha256_variants tests/test_sha256_variants.cpp)
   target_link_libraries(test_sha256_variants PRIVATE philohash)
   add_test(NAME sha256_variants COMMAND test_sha256_variants)
+
+  add_executable(test_chunk_methods tests/test_chunk_methods.cpp)
+  target_link_libraries(test_chunk_methods PRIVATE philohash)
+  add_test(NAME chunk_methods COMMAND test_chunk_methods)
 endif()

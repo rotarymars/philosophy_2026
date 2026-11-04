@@ -47,6 +47,14 @@ std::string output_flags(const OutputStats &r);
 // MB/s, best of several runs over `buf`.
 double speed(HashFn hash, int rounds, const std::vector<unsigned char> &buf);
 
+// MB/s for each hash: the median over `passes` passes, where every pass
+// measures all hashes in turn. Interleaving keeps slow periods of the machine
+// from landing on just one hash.
+std::vector<double> speeds_interleaved(const std::vector<HashFn> &hashes,
+                                       int rounds,
+                                       const std::vector<unsigned char> &buf,
+                                       int passes = 7);
+
 // Makes the CPU reach its full clock before speed measurements.
 void warm_up(HashFn hash, const std::vector<unsigned char> &buf);
 

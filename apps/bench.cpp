@@ -147,6 +147,23 @@ double speed(HashFn hash, int rounds, const std::vector<unsigned char> &buf) {
   return buf.size() / 1e6 / best;
 }
 
+std::vector<double> speeds_interleaved(const std::vector<HashFn> &hashes,
+                                       int rounds,
+                                       const std::vector<unsigned char> &buf,
+                                       int passes) {
+  std::vector<std::vector<double>> samples(hashes.size());
+  for (int pass = 0; pass < passes; pass++)
+    for (std::size_t i = 0; i < hashes.size(); i++)
+      samples[i].push_back(speed(hashes[i], rounds, buf));
+
+  std::vector<double> medians;
+  for (auto &s : samples) {
+    std::sort(s.begin(), s.end());
+    medians.push_back(s[s.size() / 2]);
+  }
+  return medians;
+}
+
 void warm_up(HashFn hash, const std::vector<unsigned char> &buf) {
   const auto start = std::chrono::steady_clock::now();
   while (std::chrono::steady_clock::now() - start < std::chrono::seconds(2))

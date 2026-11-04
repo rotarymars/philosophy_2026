@@ -1,0 +1,43 @@
+rounds,method,group,description,avalanche_mean,avalanche_min,sac_dev,coll_ratio,full_coll,balance_dev,long_mean,long_min,swap_equal,cancel_equal,word_uniq_pct,mbps,verdict
+64,sha256,baseline,"plain SHA-256",0.500064,101,0.0166786,1.01954,0,0.00370026,0.500111,99,0,0,100,250.303,ok
+64,idx-whiten,index,"XOR every word with a mask made from the index",0.500043,99,0.0211621,1.0586,0,0.0041275,0.500217,101,0,0,100,238.914,ok
+64,idx-counter,index,"mix the index into the working state (BLAKE2)",0.49995,100,0.0224175,1.03907,0,0.00396729,0.5002,94,0,0,100,252.493,ok
+64,idx-rotset,index,"index mod 4 picks the Σ rotation amounts",0.500216,98,0.0220588,1.01954,0,0.00370026,0.500688,99,0,0,100,248.133,ok
+64,idx-constants,index,"index mod 4 picks where K starts",0.500102,99,0.0197274,1.01954,0,0.00370026,0.499483,98,0,0,100,251.212,ok
+64,idx-permute,index,"index mod 4 picks the word order",0.499588,101,0.0193687,1.01954,0,0.00370026,0.500038,99,0,0,100,253.47,ok
+64,idx-word-op,index,"(index + position) mod 4 picks a word op",0.500514,99,0.0191894,1.00782,0,0.00337219,0.500025,99,0,0,100,243.043,ok
+64,idx-all,index,"index mod 4 picks Σ set, K start and word order",0.499317,100,0.0154232,1.01954,0,0.00370026,0.500278,98,0,0,100,244.942,ok
+64,cnt-rotset,content,"sum of words mod 4 picks the Σ amounts",0.499538,94,0.0215208,1.00391,0,0.0039444,0.500177,93,0,0,100,248.359,ok
+64,cnt-constants,content,"sum of words mod 4 picks where K starts",0.499375,102,0.0227762,1.00782,0,0.00430298,0.499991,101,0,0,100,247.155,ok
+64,cnt-permute,content,"sum of words mod 4 picks the word order",0.499636,100,0.0211621,0.923835,0,0.00534821,0.500163,100,0,0,100,253.07,ok
+64,cnt-all,content,"sum mod 4 picks Σ set, K start and word order",0.499976,97,0.0200861,0.982429,0,0.00353241,0.500299,98,0,0,100,245.139,ok
+64,cnt-word-op,content,"each word mod 4 picks an op for that word",0.500681,100,0.0193687,0.949226,0,0.00392914,0.500371,100,0,0,71.875,194.03,WEAK:L
+64,cnt-word-op-safe,content,"same, but the op keeps the 2 selector bits",0.499973,100,0.018472,0.962898,0,0.00520325,0.499774,95,0,0,100,175.576,ok
+64,cnt-word-rot,content,"rotate each word by the previous word mod 32",0.499545,95,0.0217001,1.05665,0,0.00488281,0.500201,97,0,0,100,246.319,ok
+64,cnt-round-select,content,"every round: e mod 4 picks the Σ amounts",0.500418,103,0.0206241,0.937507,0,0.00400543,0.499962,100,0,0,100,185.908,ok
+64,cnt-chain-select,content,"previous blocks' result mod 4 picks the Σ amounts",0.500235,99,0.0247489,1.03126,0,0.00450134,0.499292,93,0,0,100,253.165,ok
+64,idx+cnt,index+content,"(index + sum) mod 4 picks Σ, K, order",0.499963,99,0.0206241,0.982429,0,0.00353241,0.500063,98,0,0,100,250.981,ok
+64,par-xor,parallel,"blocks hashed separately, results XORed",0.500174,101,0.0215208,1.01954,0,0.00370026,0.500067,94,1000,1000,100,248.985,WEAK:XK
+64,par-xor-cnt,parallel,"same, block's sum mod 4 picks the Σ amounts",0.499929,97,0.0188307,1.00391,0,0.0039444,0.500396,100,1000,1000,100,247.024,WEAK:XK
+64,par-xor-idx,parallel,"same, index mixed in (counter)",0.499802,97,0.0208034,1.03907,0,0.00396729,0.499732,101,0,0,100,249.905,ok
+16,sha256,baseline,"plain SHA-256",0.500228,99,0.0209828,0.960945,0,0.0043869,0.500601,101,0,0,100,1071.9,ok
+16,idx-whiten,index,"XOR every word with a mask made from the index",0.499525,99,0.0197274,1.01368,0,0.00428009,0.500185,97,0,0,100,854,ok
+16,idx-counter,index,"mix the index into the working state (BLAKE2)",0.49925,102,0.0243902,0.996101,0,0.0039978,0.500752,101,0,0,100,1072.31,ok
+16,idx-rotset,index,"index mod 4 picks the Σ rotation amounts",0.500006,96,0.017396,0.960945,0,0.0043869,0.499741,99,0,0,100,1109.46,ok
+16,idx-constants,index,"index mod 4 picks where K starts",0.500086,101,0.0220588,0.960945,0,0.0043869,0.499858,100,0,0,100,1101.33,ok
+16,idx-permute,index,"index mod 4 picks the word order",0.496618,2,0.0240316,0.960945,0,0.0043869,0.499933,100,0,0,100,1084.97,ok
+16,idx-word-op,index,"(index + position) mod 4 picks a word op",0.499552,101,0.0209828,1.01759,0,0.00444794,0.500023,99,0,0,100,962.259,ok
+16,idx-all,index,"index mod 4 picks Σ set, K start and word order",0.496795,2,0.0261836,0.960945,0,0.0043869,0.499612,102,0,0,100,1102.12,ok
+16,cnt-rotset,content,"sum of words mod 4 picks the Σ amounts",0.499851,99,0.0220588,1.02735,0,0.00437927,0.499749,99,0,0,100,1087.88,ok
+16,cnt-constants,content,"sum of words mod 4 picks where K starts",0.500164,96,0.01901,1.03907,0,0.00403595,0.500143,101,0,0,100,1075.76,ok
+16,cnt-permute,content,"sum of words mod 4 picks the word order",0.492237,2,0.0270803,1.00587,0,0.065361,0.500441,94,0,0,100,1030.01,WEAK:B
+16,cnt-all,content,"sum mod 4 picks Σ set, K start and word order",0.492854,2,0.0270803,0.964851,0,0.0572891,0.499289,97,0,0,100,1079.99,WEAK:B
+16,cnt-word-op,content,"each word mod 4 picks an op for that word",0.499751,102,0.017934,1.04884,0,0.00534821,0.500378,100,0,0,71.875,528.997,WEAK:L
+16,cnt-word-op-safe,content,"same, but the op keeps the 2 selector bits",0.499971,101,0.0208034,0.93946,0,0.00361633,0.500074,91,0,0,100,375.14,ok
+16,cnt-word-rot,content,"rotate each word by the previous word mod 32",0.500088,98,0.0234935,0.992195,0,0.00418091,0.499774,99,0,0,100,1058.12,ok
+16,cnt-round-select,content,"every round: e mod 4 picks the Σ amounts",0.500331,98,0.0209828,0.982429,0,0.00378418,0.499782,97,0,0,100,801.446,ok
+16,cnt-chain-select,content,"previous blocks' result mod 4 picks the Σ amounts",0.499915,97,0.0182927,0.994148,0,0.00460815,0.49947,99,0,0,100,1073.01,ok
+16,idx+cnt,index+content,"(index + sum) mod 4 picks Σ, K, order",0.493771,36,0.0297704,0.964851,0,0.0572891,0.500379,101,0,0,100,1008.26,WEAK:B
+16,par-xor,parallel,"blocks hashed separately, results XORed",0.42217,2,0.137733,0.960945,0,0.0043869,0.41146,2,1000,1000,100,953.86,WEAK:ASMXK
+16,par-xor-cnt,parallel,"same, block's sum mod 4 picks the Σ amounts",0.426317,2,0.132532,1.02735,0,0.00437927,0.416238,2,1000,1000,100,981.629,WEAK:ASMXK
+16,par-xor-idx,parallel,"same, index mixed in (counter)",0.422013,2,0.133788,0.996101,0,0.0039978,0.411137,2,0,0,100,1002.99,WEAK:ASM

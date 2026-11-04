@@ -15,7 +15,8 @@
 //   uniq%      distinct outputs of that transform over all 2^32 inputs
 //              (100% = one-to-one). If below 100%, the program also builds
 //              two different messages with the same hash and verifies it.
-//   MB/s       hashing speed (best of several runs)
+//   MB/s       hashing speed: median of 7 passes over all methods in turn
+//              (each pass: best of 5 runs), measured after the other tests
 //
 // Usage: chunk_experiment [--rounds 64,16] [--texts DIR] [--csv FILE]
 #include "bench.hpp"
@@ -208,21 +209,32 @@ int main(int argc, char **argv) {
          "sac_dev,coll_ratio,full_coll,balance_dev,long_mean,long_min,"
          "swap_equal,cancel_equal,word_uniq_pct,mbps,verdict\n";
 
-  bench::warm_up(methods.front().hash, speed_buf);
+  std::vector<bench::HashFn> hashes;
+  for (const auto &m : methods)
+    hashes.push_back(m.hash);
 
   for (int rounds : rounds_list) {
+    std::fprintf(stderr, "testing %d rounds...\n", rounds);
+    std::vector<bench::OutputStats> outputs(methods.size());
+    std::vector<BlockStats> blocks(methods.size());
+    for (std::size_t i = 0; i < methods.size(); i++) {
+      bench::avalanche(methods[i].hash, rounds, texts, outputs[i]);
+      bench::counter_inputs(methods[i].hash, rounds, outputs[i]);
+      multi_block(methods[i], rounds, blocks[i]);
+    }
+    bench::warm_up(methods.front().hash, speed_buf);
+    const auto speeds = bench::speeds_interleaved(hashes, rounds, speed_buf);
+
     std::printf("\n=== %d rounds ===\n", rounds);
     std::printf("%-17s %-8s %6s %4s %6s %6s %4s %6s %6s %4s %4s %6s %7s %6s  "
                 "%s\n",
                 "method", "group", "aval", "min", "SAC", "coll", "full", "bal",
                 "long", "lmin", "swap", "cancel", "uniq%", "MB/s", "verdict");
-    for (const auto &m : methods) {
-      bench::OutputStats o;
-      bench::avalanche(m.hash, rounds, texts, o);
-      bench::counter_inputs(m.hash, rounds, o);
-      BlockStats b;
-      multi_block(m, rounds, b);
-      const double mbps = bench::speed(m.hash, rounds, speed_buf);
+    for (std::size_t i = 0; i < methods.size(); i++) {
+      const auto &m = methods[i];
+      const auto &o = outputs[i];
+      const auto &b = blocks[i];
+      const double mbps = speeds[i];
       const std::string verd = verdict(o, b, uniq[m.name]);
       const std::string group = m.group.substr(0, 8);
 
